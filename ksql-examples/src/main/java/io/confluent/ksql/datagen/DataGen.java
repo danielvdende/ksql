@@ -18,6 +18,8 @@ package io.confluent.ksql.datagen;
 import com.google.common.collect.ImmutableMap;
 import io.confluent.avro.random.generator.Generator;
 import io.confluent.ksql.util.KsqlConfig;
+import org.apache.commons.cli.*;
+
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -30,11 +32,38 @@ import java.util.Random;
 import java.util.function.BiConsumer;
 
 public final class DataGen {
+  private static Options options = new Options()
+    .addOption(Option.builder().type(String.class).longOpt("").hasArg().build())
+    .addOption("quickstart", "")
+    .addOption(Option.builder().type(String.class).longOpt("schema").hasArg().build())
+    .addOption(Option.builder().type(String.class).longOpt("format").build())
+    .addOption(Option.builder().type(String.class).longOpt("topic").build())
+    .addOption(Option.builder().type(String.class).longOpt("key").build())
+    .addOption(Option.builder().type(Integer.class).longOpt("iterations").build())
+    .addOption(Option.builder().type(Integer.class).longOpt("maxInterval").build())
+    .addOption(Option.builder().type(String.class).longOpt("propertiesFile").build());
+
+//        "usage: DataGen " + newLine
+//        + "[help] " + newLine
+//        + "[bootstrap-server=<kafka bootstrap server(s)> (defaults to localhost:9092)] " + newLine
+//        + "[quickstart=<quickstart preset> (case-insensitive; one of 'orders', 'users', or "
+//        + "'pageviews')] " + newLine
+//        + "schema=<avro schema file> " + newLine
+//        + "[schemaRegistryUrl=<url for Confluent Schema Registry> "
+//        + "(defaults to http://localhost:8081)] " + newLine
+//        + "format=<message format> (case-insensitive; one of 'avro', 'json', or "
+//        + "'delimited') " + newLine
+//        + "topic=<kafka topic name> " + newLine
+//        + "key=<name of key column> " + newLine
+//        + "[iterations=<number of rows> (defaults to 1,000,000)] " + newLine
+//        + "[maxInterval=<Max time in ms between rows> (defaults to 500)] " + newLine
+//        + "[propertiesFile=<file specifying Kafka client properties>]" + newLine
 
   private DataGen() {
   }
 
   public static void main(final String[] args) {
+
     try {
       run(args);
     } catch (final Arguments.ArgumentParseException exception) {
@@ -48,61 +77,75 @@ public final class DataGen {
   }
 
   static void run(final String... args) throws IOException {
-    final Arguments arguments = new Arguments.Builder()
-        .parseArgs(args)
-        .build();
+    CommandLineParser parser = new DefaultParser();
+    try{
+      CommandLine cmd = parser.parse(DataGen.options, args);
 
-    if (arguments.help) {
-      usage();
-      return;
+      if(cmd.hasOption("help")){
+        usage();
+        return;
+      }
+
+      final Generator generator = new Generator(cmd.getOptionValue("schemaFile"), new Random());
+      final Properties props = getProperties(cmd);
+      // TODO: getProducer needs to get an enum value, not a string
+      final DataGenProducer dataProducer = new ProducerFactory().getProducer(cmd.getOptionValue("format"), props);
+
+      dataProducer.populateTopic(
+              props,
+              generator,
+              cmd.getOptionValue("topicName"),
+              cmd.getOptionValue("keyName"),
+              Integer.parseInt(cmd.getOptionValue("iterations")),
+              Integer.parseInt(cmd.getOptionValue("maxInterval"))
+      );
+    } catch(ParseException e){
+      System.err.println("OHNOES");
     }
 
-    final Generator generator = new Generator(arguments.schemaFile, new Random());
-    final Properties props = getProperties(arguments);
-    final DataGenProducer dataProducer = new ProducerFactory().getProducer(arguments.format, props);
 
-    dataProducer.populateTopic(
-        props,
-        generator,
-        arguments.topicName,
-        arguments.keyName,
-        arguments.iterations,
-        arguments.maxInterval
-    );
+//    final Arguments arguments = new Arguments.Builder()
+//        .parseArgs(args)
+//        .build();
+//
+//    if (arguments.help) {
+//      usage();
+//      return;
+//    }
+//
+//    final Generator generator = new Generator(arguments.schemaFile, new Random());
+//    final Properties props = getProperties(arguments);
+//    final DataGenProducer dataProducer = new ProducerFactory().getProducer(arguments.format, props);
+//
+//    dataProducer.populateTopic(
+//        props,
+//        generator,
+//        arguments.topicName,
+//        arguments.keyName,
+//        arguments.iterations,
+//        arguments.maxInterval
+//    );
   }
 
-  static Properties getProperties(final Arguments arguments) throws IOException {
+  static Properties getProperties(final CommandLine cmd) throws IOException {
     final Properties props = new Properties();
-    props.put("bootstrap.servers", arguments.bootstrapServer);
+    props.put("bootstrap.servers", cmd.getOptionValue("bootstrapServer"));
     props.put("client.id", "KSQLDataGenProducer");
-    props.put(KsqlConfig.SCHEMA_REGISTRY_URL_PROPERTY, arguments.schemaRegistryUrl);
+    props.put(KsqlConfig.SCHEMA_REGISTRY_URL_PROPERTY, cmd.getOptionValue("schemaRegistryUrl"));
 
-    if (arguments.propertiesFile != null) {
-      props.load(arguments.propertiesFile);
+    if(cmd.hasOption("propertiesFile")){
+      try {
+        props.load(new FileInputStream(cmd.getOptionValue("propertiesFile")));
+      } catch (final Exception e) {
+        throw new IllegalArgumentException("File not found: " + cmd.getOptionValue("propertiesFile"), e);
+      }
     }
-
     return props;
   }
 
   private static void usage() {
-    final String newLine = System.lineSeparator();
-    System.err.println(
-        "usage: DataGen " + newLine
-        + "[help] " + newLine
-        + "[bootstrap-server=<kafka bootstrap server(s)> (defaults to localhost:9092)] " + newLine
-        + "[quickstart=<quickstart preset> (case-insensitive; one of 'orders', 'users', or "
-        + "'pageviews')] " + newLine
-        + "schema=<avro schema file> " + newLine
-        + "[schemaRegistryUrl=<url for Confluent Schema Registry> "
-        + "(defaults to http://localhost:8081)] " + newLine
-        + "format=<message format> (case-insensitive; one of 'avro', 'json', or "
-        + "'delimited') " + newLine
-        + "topic=<kafka topic name> " + newLine
-        + "key=<name of key column> " + newLine
-        + "[iterations=<number of rows> (defaults to 1,000,000)] " + newLine
-        + "[maxInterval=<Max time in ms between rows> (defaults to 500)] " + newLine
-        + "[propertiesFile=<file specifying Kafka client properties>]" + newLine
-    );
+    HelpFormatter formatter = new HelpFormatter();
+    formatter.printHelp("DataGen", DataGen.options);
   }
 
   static class Arguments {
@@ -235,10 +278,6 @@ public final class DataGen {
       }
 
       Arguments build() {
-        if (help) {
-          return new Arguments(true, null, null, null, null, null, 0, -1, null, null);
-        }
-
         if (quickstart != null) {
           schemaFile = Optional.ofNullable(schemaFile).orElse(quickstart.getSchemaFile());
           format = Optional.ofNullable(format).orElse(quickstart.getFormat());
@@ -324,6 +363,7 @@ public final class DataGen {
         handler.accept(this, argVal);
       }
 
+      // DANIEL: these will be useful. Perhaps need minor refactoring/reformatting
       private static FileInputStream toFileInputStream(final String argVal) {
         try {
           return new FileInputStream(argVal);
